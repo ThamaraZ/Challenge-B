@@ -1,0 +1,314 @@
+---
+title: "Challenge B"
+author: "SOUNNI Widad & ZITOUNI Thamara"
+date: "8 december 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Before starting the challenge, we need to downoald all the packages needed.
+
+The link of Github deposit: https://github.com/ThamaraZ
+
+```{r packages, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+#We install all the packages needed. 
+library(caret)
+library(tidyverse)
+library(randomForest)
+library(ggplot2)
+library(np)
+library(latexpdf)
+library(readr)
+library(knitr)
+library(readxl)
+```
+
+##TASK 1.B
+###STEP 1
+
+Random Forest is a machine learning algorithm that is particularly efficient to spot links between a variable to explain and explanatory variables. 
+Random Forest will classify the explanatory variables according to their links with the variable to explain. It produces a lot of little classification trees on a random fraction of the data and then makes them vote, from this vote are deduced the sequence and the importance of the explanatory variables.
+
+
+###STEP 2
+
+First, we import the database train and we clean it.
+After that we can use the RandomForest model.
+```{r import database train, echo=FALSE, results='hide'}
+#We import the database with the function read.csv. We choose the database train.
+
+train <- read.csv(file=file.choose())
+
+#First we clean the dataset
+remove.vars <- train %>% summarise_all(.funs = funs(sum(is.na(.)))) %>% gather(key = "feature", value = "missing.observations") %>% filter(missing.observations > 100) %>% select(feature) %>% unlist
+
+train <- train %>% select(- one_of(remove.vars))
+
+train %>% summarise_all(.funs = funs(sum(is.na(.)))) %>% gather(key = "feature", value = "missing.observations") %>% filter(missing.observations > 0)
+
+train <- train %>% filter(is.na(GarageType) == FALSE, is.na(MasVnrType) == FALSE, is.na(BsmtFinType2) == FALSE, is.na(BsmtExposure) == FALSE, is.na(Electrical) == FALSE)
+#We remove rows with NA in some of these variables, check if you take all missing values like this
+
+#We make sure it's all clean : Yes
+train %>% summarise_all(.funs = funs(sum(is.na(.)))) %>% gather(key = "feature", value = "missing.observations") %>% filter(missing.observations > 0)
+```
+
+```{r model RandomForest}
+#We train the model with the RandomForest method
+(model <- randomForest(SalePrice ~ . -Id,data= train, ntree = 500, na.action=na.omit))
+``` 
+
+###STEP 3
+
+
+```{r import database test, echo=FALSE, results='hide'}
+#We import the database with the function readexcel. We choose the database test.
+test <- read.csv(file=file.choose())
+
+#With the following code, we resolve the problem of the difference of levels between the two databases
+common <- intersect(names(train), names(test)) 
+for (p in common) { 
+  if (class(train[[p]]) == "factor") { 
+    levels(test[[p]]) <- levels(train[[p]]) 
+  } 
+}
+
+#We make predictions with the function predict on the sample test with the previous random forest model.
+Prediction <- data.frame(Id= test$Id, SalePrice_predict = predict(model, test, type="response"))
+
+#We run an OLS model (linear regression) on some variables that seems to us important and relevant.
+lm_model_2 <- lm(SalePrice ~ MSZoning + LotArea + Neighborhood  + YearBuilt + OverallQual, data = train)
+summary(lm_model_2)
+
+#We make predictions on the data test with the OLS model.
+prediction <- data.frame(Id = test$Id, SalePrice_predict = predict(lm_model_2, test, type="response"))
+
+#We put the predictions made with the RandomForest and the OLS model into a table
+AllPredictions <- data.frame(Prediction$SalePrice_predict, prediction$SalePrice_predict)
+
+#We change the names of the columns
+colnames(AllPredictions) <- c("PredictRandomForest", "PredictOLS")
+
+#We plot, with the function ggplot, the point of the two predictions and the two lines of regression
+
+p <- ggplot() +
+  geom_point(data=AllPredictions, aes(x=test$YearBuilt, y=PredictRandomForest), color="green") + geom_smooth(mapping =aes(x=test$YearBuilt, y=PredictRandomForest), data = AllPredictions, stat = "smooth", method = "auto", formula =(randomForest(SalePrice ~ . -Id,data= train, ntree = 500, na.action=na.omit)),se = TRUE, na.rm = FALSE, color="black") + 
+  geom_point(data=AllPredictions, aes(x=test$YearBuilt, y=PredictOLS), color="orange") + geom_smooth(mappin= aes( x=test$YearBuilt, y=AllPredictions$PredictOLS), method = "lm", se = FALSE, color="red")
+p <- p+ labs(title="Comparaison of the predictions between the two models", x="Year of built", y="Predictions")
+```
+
+```{r comparaison, echo=FALSE, message=FALSE, warning=FALSE}
+#We see the plot.
+p
+
+
+``` 
+
+The points in orange represent the predictions made with the linear model, whereas the points in green represent the predictions made with the RandomForest model. 
+The linear curve in red is the linear regression and the curve in black is the RandomForest curve.
+
+As we can see, the linear line does not follow the scatter plot whereas the black one follows the trend that emerges from these points.
+Moreover, we can observe that the predictions made with a linear model are smaller than those made with the RandomForest model. However, we can notice that the two scatter plots are not really different and seem to follow the same trend. 
+According to the graph, we may think that the predictions made with the RandomForest model are closer to the reality than the predictions made with the linear model.
+ 
+##TASK 2.B
+###STEP 1
+
+```{r setup task2, echo=FALSE, results='hide'}
+# Simulating an overfit
+# True model : y = x^3 + epsilon
+set.seed(1)
+Nsim <- 150
+b <- c(0,1)
+x0 <- rep(1, Nsim)
+x1 <- rnorm(n = Nsim)
+
+X <- cbind(x0, x1^3)
+y.true <- X %*% b
+
+eps <- rnorm(n = Nsim)
+y <- X %*% b + eps
+
+df <- tbl_df(y[,1]) %>% rename(y = value) %>% bind_cols(tbl_df(x1)) %>% rename(x = value) %>% bind_cols(tbl_df(y.true[,1])) %>% rename(y.true = value)
+
+# We put X (the random variable) and the output y in a table using the function data.frame
+simulation <- data.frame(X,y)
+simulation
+
+# We split the sample into two subsample 
+training.index <- createDataPartition(y = y, times = 1, p = 0.8)
+df <- df %>% mutate(which.data = ifelse(1:n() %in% training.index$Resample1, "training", "test"))
+
+#We create the 2 subsamples: training and test
+training <- df %>% filter(which.data == "training")
+test <- df %>% filter(which.data == "test")
+```
+
+```{r step1 task2}
+# Train local linear model y ~ x on training, using default low flexibility (high bandwidth):
+ll.fit.lowflex <- npreg(y ~ x, data = training, method = "11", bws = 0.5)
+summary(ll.fit.lowflex)
+```
+
+###Step 2
+
+```{r step2 task2}
+# Train local linear model y ~ x on training, using default low flexibility 
+ll.fit.highflex <- npreg(y ~ x, data = training, method = "ll", bws = 0.01)
+summary(ll.fit.highflex)
+```
+
+
+###Step 3
+
+```{r step3 task2, echo=FALSE, results='hide'}
+
+#We make the predictions
+df <- df %>% mutate(y.ll.lowflex = predict(object = ll.fit.lowflex, newdata = df), y.ll.highflex = predict(object = ll.fit.highflex, newdata = df))
+
+training <- training %>% mutate(y.ll.lowflex = predict(object = ll.fit.lowflex, newdata = training), y.ll.highflex = predict(object = ll.fit.highflex, newdata = training))
+```
+
+```{r step3 task2 scatterplot}
+
+#We made the scatterplot
+ggplot(training) + geom_point(mapping = aes(x = x, y = y)) + 
+  geom_line(mapping = aes(x = x, y = y.true)) + 
+  geom_line(mapping = aes(x = x, y = y.ll.lowflex), color = "red") + 
+  geom_line(mapping = aes(x = x, y = y.ll.highflex), color = "green")
+```
+
+###STEP 4
+
+
+Between the high-flexibility local linear model and the low-flexibility local linear model we can see on the graph that the bias of the green line (high-flexibility local linear model) is less important than the red line one (low-flexibility local linear model), because it is closer to the true observations. So the predictions of the high flexibilty model have the least bias.
+
+
+###Step 5
+
+```{r step5 task2, echo=FALSE, results='hide'}
+#We do the same that in step 3
+ll.fit.lowflex <- npreg(y ~ x, data = test, method = "11", bws = 0.5)
+ll.fit.highflex <- npreg(y ~ x, data = test, method = "ll", bws = 0.01)
+
+df <- df %>% mutate(y.ll.lowflex = predict(object = ll.fit.lowflex, newdata = df), y.ll.highflex = predict(object = ll.fit.highflex, newdata = df))
+test <- test %>% mutate(y.ll.lowflex = predict(object = ll.fit.lowflex, newdata = test), y.ll.highflex = predict(object = ll.fit.highflex, newdata = test))
+```
+
+```{r step5 task2 scatterplot}
+
+ggplot(test) + geom_point(mapping = aes(x = x, y = y)) + 
+  geom_line(mapping = aes(x = x, y = y.true)) + 
+  geom_line(mapping = aes(x = x, y = y.ll.lowflex), color = "red") + 
+  geom_line(mapping = aes(x = x, y = y.ll.highflex), color = "blue")
+```
+
+
+```{r step6 task2, echo=FALSE, results='hide'}
+# Create vector of several bandwidth
+bw <- seq(0.01, 0.5, by = 0.001)
+```
+
+```{r step7 task2, echo=FALSE, results='hide'}
+llbw.fit <- lapply(X = bw, FUN = function(bw) {npreg(y ~ x, data = training, method = "ll", bws = bw)})
+```
+
+
+```{r step8 task2, echo=FALSE, results='hide'}
+# Compute for each bandwidth the MSE-training
+mse.training <- function(fit.model){
+  predictions <- predict(object = fit.model, newdata = training)
+  training %>% mutate(squared.error = (y - predictions)^2) %>% summarize(mse = mean(squared.error))
+}
+mse.train.results <- unlist(lapply(X = llbw.fit, FUN = mse.training))
+```
+
+```{r step9 task2, echo=FALSE, results='hide'}
+mse.test <- function(fit.model){
+  predictions <- predict(object = fit.model, newdata = test)
+  test %>% mutate(squared.error = (y - predictions)^2) %>% summarize(mse = mean(squared.error))
+}
+mse.test.results <- unlist(lapply(X = llbw.fit, FUN = mse.test))
+```
+
+### Step 10
+```{r step10 task2, echo=FALSE, results='hide'}
+
+mse.df <- tbl_df(data.frame(bandwidth = bw, mse.train = mse.train.results, mse.test = mse.test.results))
+```
+
+```{r step10 task2 scatterplot}
+#We made the plot
+ggplot(mse.df) + 
+  geom_line(mapping = aes(x = bandwidth, y = mse.train), color = "blue") +
+  geom_line(mapping = aes(x = bandwidth, y = mse.test), color = "orange")
+```
+
+As we can see on the plot, when bandwith is higher than 0,12 both MSE lines start to follow the same trend by increasing, even if the MSE of training increases but less than the MSE of test. At the opposite, when bandwidth tends to zero, the MSE of training decreases to -infinity whereas the MSE of test increases to +infinity.
+
+To conclude we can notice that according to the bandwidth level, we will choose the right data, since on our regression we want to minimize the square of the error terms with these predictions.
+
+
+
+
+##TASK 3.B
+
+###STEP 1 and 2
+
+We have import the database CNIL and we clean it. After that, we use the function str_sub to have only the two digits of the departement. We put them with the variable responsible into a nice table and with the function table we can know the number of organizations that has nominated a CNIL per department.
+
+We obtain this (quite long) table with the function kable.
+
+
+```{r task3, echo=FALSE, warning=FALSE, results='hide'}
+
+#STEP 1#
+
+CNIL <- read_excel("C:/Users/Thamara/Downloads/OpenCNIL_Organismes_avec_CIL_VD_20171115.xlsx")
+
+#STEP 2#
+
+# First clean the dataset
+remove.vars <- CNIL %>% summarise_all(.funs = funs(sum(is.na(.)))) %>% gather(key = "feature", value = "missing.observations") %>% filter(missing.observations > 100) %>% select(feature) %>% unlist
+
+CNIL <- CNIL %>% select(- one_of(remove.vars))
+
+CNIL %>% summarise_all(.funs = funs(sum(is.na(.)))) %>% gather(key = "feature", value = "missing.observations") %>% filter(missing.observations > 0)
+
+
+CNIL <- CNIL %>% filter(is.na(Adresse) == FALSE, is.na(`Code Postal`) == FALSE, is.na(Ville) == FALSE)
+# remove rows with NA in some of these variables, check if you take all missing values like this
+
+# make sure it's all clean : Yes
+CNIL %>% summarise_all(.funs = funs(sum(is.na(.)))) %>% gather(key = "feature", value = "missing.observations") %>% filter(missing.observations > 0)
+
+attach(CNIL)
+
+#We put the databse CNIL into data.frame
+CNIL <- data.frame(CNIL)
+
+#We cut the two first elements of the code postal
+dept <- str_sub(`Code Postal`, start=1, end=2)
+
+#We transform the two digits into numeric
+dept <- as.numeric(dept)
+
+#We put into a table the Department digits and the organization
+table <- data.frame(Responsable,dept)
+
+#With the function table we have the frequence of the number of organizations that has nominated a CNIL per department. 
+nicetable <- table(dept)
+
+nicetable <- data.frame(nicetable)
+
+#We change the name of the columns
+colnames(nicetable) <- c("Department", "Number of organization")
+```
+
+```{r nicetable, echo=FALSE}
+#We display the table
+kable(nicetable)
+```
